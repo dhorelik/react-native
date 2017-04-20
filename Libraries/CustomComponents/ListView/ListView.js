@@ -40,6 +40,7 @@ var ScrollView = require('ScrollView');
 var ScrollResponder = require('ScrollResponder');
 var StaticRenderer = require('StaticRenderer');
 var TimerMixin = require('react-timer-mixin');
+var View = require('View');
 
 var cloneReferencedElement = require('react-clone-referenced-element');
 var isEmpty = require('isEmpty');
@@ -51,7 +52,7 @@ var DEFAULT_PAGE_SIZE = 1;
 var DEFAULT_INITIAL_ROWS = 10;
 var DEFAULT_SCROLL_RENDER_AHEAD = 1000;
 var DEFAULT_END_REACHED_THRESHOLD = 1000;
-var DEFAULT_SCROLL_CALLBACK_THROTTLE = 50;
+var DEFAULT_SCROLL_CALLBACK_THROTTLE = 1;
 
 
 /**
@@ -449,18 +450,31 @@ var ListView = React.createClass({
         var comboID = sectionID + '_' + rowID;
         var shouldUpdateRow = rowCount >= this._prevRenderedRowsCount &&
           dataSource.rowShouldUpdate(sectionIdx, rowIdx);
-        var row =
-          <StaticRenderer
-            key={'r_' + comboID}
-            shouldUpdate={!!shouldUpdateRow}
-            render={this.props.renderRow.bind(
-              null,
-              dataSource.getRowData(sectionIdx, rowIdx),
-              sectionID,
-              rowID,
-              this._onRowHighlighted
-            )}
-          />;
+
+        var isVisible = (
+          !this._childFrames[totalIndex] || (
+            this._visibleRows[sectionID] &&
+            this._visibleRows[sectionID][rowID]
+          )
+        );
+        if (isVisible) {
+          var row =
+            <StaticRenderer
+              key={'r_' + comboID}
+              shouldUpdate={!!shouldUpdateRow}
+              render={this.props.renderRow.bind(
+                null,
+                dataSource.getRowData(sectionIdx, rowIdx),
+                sectionID,
+                rowID,
+                this._onRowHighlighted
+              )}
+            />;
+        } else {
+          var row = <View style={{height: this._childFrames[totalIndex].height}}/>
+        }
+
+
         bodyComponents.push(row);
         totalIndex++;
 
@@ -610,9 +624,20 @@ var ListView = React.createClass({
   },
 
   _updateVisibleRows: function(updatedFrames?: Array<Object>) {
-    if (!this.props.onChangeVisibleRows) {
-      return; // No need to compute visible rows if there is no callback
+    var updatedFrames = [];
+    let ySum = 0;
+    for (var i = 0; i < this.props.dataSource._dataBlob.s1.length; i++) {
+      const height = (this.props.childHeights[i] || this.props.defaultRowHeight);
+      updatedFrames.push({
+        index: i,
+        x: 0,
+        y: ySum,
+        width: this.props.defaultRowWidth,
+        height
+      });
+      ySum += height;
     }
+
     if (updatedFrames) {
       updatedFrames.forEach((newFrame) => {
         this._childFrames[newFrame.index] = merge(newFrame);
@@ -620,8 +645,8 @@ var ListView = React.createClass({
     }
     var isVertical = !this.props.horizontal;
     var dataSource = this.props.dataSource;
-    var visibleMin = this.scrollProperties.offset;
-    var visibleMax = visibleMin + this.scrollProperties.visibleLength;
+    var visibleMin = this.scrollProperties.offsetY - this.scrollProperties.visibleLength;
+    var visibleMax = this.scrollProperties.offsetY + 2 * this.scrollProperties.visibleLength;
     var allRowIDs = dataSource.rowIdentities;
 
     var header = this.props.renderHeader && this.props.renderHeader();
@@ -682,7 +707,10 @@ var ListView = React.createClass({
         delete this._visibleRows[sectionID];
       }
     }
-    visibilityChanged && this.props.onChangeVisibleRows(this._visibleRows, changedRows);
+    if (visibilityChanged)  {
+      this.forceUpdate()
+    }
+    visibilityChanged && this.props.onChangeVisibleRows && this.props.onChangeVisibleRows(this._visibleRows, changedRows);
   },
 
   _onScroll: function(e: Object) {
